@@ -15,12 +15,14 @@ type t =
   | Ret of arg option
   | Print of arg list
   | Nop
+  | Phi of Dest.t * (label * arg) list
 [@@deriving compare, equal, sexp_of]
 
 let dest = function
   | Const (dest, _)
   | Binary (dest, _, _, _)
-  | Unary (dest, _, _) ->
+  | Unary (dest, _, _)
+  | Phi (dest, _) ->
     Some dest
   | Call (dest, _, _) -> dest
   | Label _
@@ -40,6 +42,8 @@ let args = function
   | Print args ->
     args
   | Ret arg -> Option.value_map arg ~default:[] ~f:List.return
+  | Phi (_, pairs) ->
+     List.map pairs ~f:snd
   | Const _
   | Label _
   | Jmp _
@@ -130,6 +134,13 @@ let to_json =
   | Print args ->
     `Assoc [ ("op", `String "print"); ("args", `List (List.map args ~f:(fun arg -> `String arg))) ]
   | Nop -> `Assoc [ ("op", `String "nop") ]
+  | Phi (dest, pairs) ->
+    `Assoc
+      ( [
+        ("op", `String "phi");
+        ("args", `List (List.map pairs ~f:(fun (_, arg) -> `String arg)));
+        ("labels", `List (List.map pairs ~f:(fun (label, _) -> `String label)));
+      ] @ dest_to_json dest )
 
 let to_string =
   let dest_to_string (name, bril_type) = sprintf "%s: %s =" name (Bril_type.to_string bril_type) in
@@ -152,3 +163,6 @@ let to_string =
     | None -> "ret" )
   | Print args -> String.concat ~sep:" " ("print" :: args)
   | Nop -> "nop"
+  | Phi (dest, pairs) ->
+    sprintf "%s phi %s" (dest_to_string dest)
+      (List.map pairs ~f:(fun (label, arg) -> sprintf ".%s %s" label arg) |> String.concat ~sep:" ")
