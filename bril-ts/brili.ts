@@ -293,6 +293,12 @@ type Action =
   {"action": "abort", "label": bril.Ident};
 let NEXT: Action = {"action": "next"};
 
+type TraceHeader = {
+  label: string,
+  func: string,
+  pc: number
+}
+
 /**
  * The interpreter state that's threaded through recursive calls.
  */
@@ -304,12 +310,17 @@ type State = {
   // For profiling: a total count of the number of instructions executed.
   icount: bigint,
 
-  // For SSA (phi-node) execution: keep track of recently-seen labels.j
+  // For SSA (phi-node) execution: keep track of recently-seen labels.
   curlabel: string | null,
   lastlabel: string | null,
 
   // For speculation: the state at the point where speculation began.
   specparent: State | null,
+
+  // For tracing
+  trace_header: TraceHeader | null,
+  traced_labels_this_time: string[],
+  traced_labels: string[],
 }
 
 /**
@@ -354,6 +365,9 @@ function evalCall(instr: bril.Operation, state: State): Action {
     lastlabel: null,
     curlabel: null,
     specparent: null,  // Speculation not allowed.
+    trace_header: state.trace_header,
+    traced_labels_this_time: state.traced_labels_this_time,
+    traced_labels: state.traced_labels,
   }
   let retVal = evalFunc(func, newState);
   state.icount = newState.icount;
@@ -392,14 +406,120 @@ function evalCall(instr: bril.Operation, state: State): Action {
   return NEXT;
 }
 
+function traceInstr(instr: bril.Instruction, state: State, pc: number) {
+    if (state.trace_header !== null) {
+        switch (instr.op) {
+        case "const":
+        case "id":
+        case "add":
+        case "mul":
+        case "sub":
+        case "div":
+        case "le":
+        case "lt":
+        case "gt":
+        case "ge":
+        case "eq":
+        case "not":
+        case "or":
+        case "fadd":
+        case "fsub":
+        case "fmul":
+        case "fdiv":
+        case "fle":
+        case "flt":
+        case "fgt":
+        case "feq":
+        case "print":
+        case "ptradd":
+        case "phi":
+            // trace normally
+            writeTracedInstr(instr);
+            break;
+        case "jmp":
+        case "nop":
+            // nop
+            break;
+        case "br":
+            // TODO insert guard
+            writeTracedInstr({ op: "guard", "args": instr.args, "labels": [ state.trace_header.label ] });
+            break;
+        case "ret":
+        case "call":
+            // interprocedural unsupported
+            stopTrace(state, pc);
+            break;
+        case "alloc":
+        case "free":
+        case "store":
+        case "load":
+            // memory unsupported
+            stopTrace(state, pc);
+            break;
+        case "speculate":
+        case "guard":
+        case "commit":
+            // already been traced
+            throw "attempt to trace already-traced program";
+        default:
+            throw ("unrecognized instruction: " + JSON.stringify(instr))
+        }
+    }
+}
+
+function traceLabel(label: string, state: State, func: bril.Function, pc: number) {
+    if (state.trace_header === null) {
+        // only trace starting from each label once
+        if (!state.traced_labels.includes(label)) {
+            // I know this isn't to spec, but it's a way of packing extra information for use by the transformation phase
+            writeTracedInstr({ op: "speculate", labels: [ label ], args: [ func.name, pc.toString() ] });
+            state.trace_header = { label: label, func: func.name, pc: pc };
+            state.traced_labels.push(label);
+            state.traced_labels_this_time.push(label);
+        }
+    } else {
+        // stop tracing once we complete a cycle
+        if (state.traced_labels_this_time.includes(label)) {
+            stopTrace(state, label);
+        } else {
+            state.traced_labels_this_time.push(label);
+        }
+    }
+}
+
+function stopTrace(state: State, jmp: string | number | null) {
+  if (typeof jmp === 'string') {
+    writeTracedInstr({ op: "commit", labels: [ jmp ] });
+  } else if (typeof jmp === 'number') {
+    writeTracedInstr({ op: "commit", args: [ jmp.toString() ] });
+  } else {
+    writeTracedInstr({ op: "commit" });
+  }
+  state.trace_header = null;
+  state.traced_labels_this_time = [];
+}
+
+function traceEnd(state: State, pc: number | null) {
+  // stop tracing when we hit the bottom of a function
+  if (state.trace_header !== null) {
+    stopTrace(state, pc);
+  }
+}
+
+function writeTracedInstr(instr: bril.Instruction) {
+  console.log("TRACE: " + JSON.stringify(instr));
+}
+
 /**
  * Interpret an instruction in a given environment, possibly updating the
  * environment. If the instruction branches to a new label, return that label;
  * otherwise, return "next" to indicate that we should proceed to the next
  * instruction or "end" to terminate the function.
  */
-function evalInstr(instr: bril.Instruction, state: State): Action {
+function evalInstr(instr: bril.Instruction, state: State, pc: number): Action {
   state.icount += BigInt(1);
+
+  traceInstr(instr, state, pc);
 
   // Check that we have the right number of arguments.
   if (instr.op !== "const") {
@@ -718,7 +838,7 @@ function evalFunc(func: bril.Function, state: State): Value | null {
     let line = func.instrs[i];
     if ('op' in line) {
       // Run an instruction.
-      let action = evalInstr(line, state);
+      let action = evalInstr(line, state, i);
 
       // Take the prescribed action.
       switch (action.action) {
@@ -780,8 +900,12 @@ function evalFunc(func: bril.Function, state: State): Value | null {
       // Update CFG tracking for SSA phi nodes.
       state.lastlabel = state.curlabel;
       state.curlabel = line.label;
+
+      traceLabel(line.label, state, func, i);
     }
   }
+
+  traceEnd(state, null);
 
   // Reached the end of the function without hitting `ret`.
   if (state.specparent) {
@@ -852,6 +976,9 @@ function evalProg(prog: bril.Program) {
     lastlabel: null,
     curlabel: null,
     specparent: null,
+    trace_header: null,
+    traced_labels_this_time: [],
+    traced_labels: [],
   }
   evalFunc(main, state);
 
