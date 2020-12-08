@@ -1,0 +1,102 @@
+@main(n: int) {
+  one: int = const 1;
+  n_sq: int = mul n n;
+  a: int = id one;
+.outer_loop:
+  b: int = id one;
+.inner_loop:
+  a_sq: int = mul a a;
+  b_sq: int = mul b b;
+  sum: int = add a_sq b_sq;
+  found: bool = eq sum n_sq;
+  br found ._found_traced ._inner_continue_traced;
+.found:
+  print b a;
+.inner_continue:
+  b: int = add b one;
+  done: bool = ge b a;
+  br done ._outer_continue_traced ._inner_loop_traced;
+.outer_continue:
+  a: int = add a one;
+  done: bool = ge a n;
+  br done ._finish_traced ._outer_loop_traced;
+.finish:
+  jmp ._fresh_1;
+._outer_loop_traced:
+  speculate;
+  b: int = id one;
+  a_sq: int = mul a a;
+  b_sq: int = mul b b;
+  sum: int = add a_sq b_sq;
+  found: bool = eq sum n_sq;
+  guard found .outer_loop;
+  b: int = add b one;
+  done: bool = ge b a;
+  guard done .outer_loop;
+  a: int = add a one;
+  done: bool = ge a n;
+  guard done .outer_loop;
+  commit;
+  jmp ._outer_loop_traced;
+._inner_loop_traced:
+  speculate;
+  a_sq: int = mul a a;
+  b_sq: int = mul b b;
+  sum: int = add a_sq b_sq;
+  found: bool = eq sum n_sq;
+  guard found .inner_loop;
+  b: int = add b one;
+  done: bool = ge b a;
+  guard done .inner_loop;
+  a: int = add a one;
+  done: bool = ge a n;
+  guard done .inner_loop;
+  b: int = id one;
+  commit;
+  jmp ._inner_loop_traced;
+._inner_continue_traced:
+  speculate;
+  b: int = add b one;
+  done: bool = ge b a;
+  guard done .inner_continue;
+  a_sq: int = mul a a;
+  b_sq: int = mul b b;
+  sum: int = add a_sq b_sq;
+  found: bool = eq sum n_sq;
+  guard found .inner_continue;
+  commit;
+  jmp ._inner_continue_traced;
+._outer_continue_traced:
+  speculate;
+  a: int = add a one;
+  done: bool = ge a n;
+  guard done .outer_continue;
+  b: int = id one;
+  a_sq: int = mul a a;
+  b_sq: int = mul b b;
+  sum: int = add a_sq b_sq;
+  found: bool = eq sum n_sq;
+  guard found .outer_continue;
+  b: int = add b one;
+  done: bool = ge b a;
+  guard done .outer_continue;
+  commit;
+  jmp ._inner_loop_traced;
+._found_traced:
+  speculate;
+  print b a;
+  b: int = add b one;
+  done: bool = ge b a;
+  guard done .found;
+  a_sq: int = mul a a;
+  b_sq: int = mul b b;
+  sum: int = add a_sq b_sq;
+  found: bool = eq sum n_sq;
+  guard found .found;
+  commit;
+  jmp ._inner_continue_traced;
+._finish_traced:
+  speculate;
+  commit;
+._fresh_1:
+}

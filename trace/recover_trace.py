@@ -14,8 +14,17 @@ def recover_traces(source):
     fresh_label_counter = 0
 
     def fresh_label():
+        nonlocal fresh_label_counter
         fresh_label_counter += 1
         return '_fresh_' + str(fresh_label_counter)
+
+    end_labels = {}
+
+    # make sure the program ends when it's supposed to
+    for _func in prog['functions']:
+        target_label = fresh_label()
+        _func['instrs'].append({'op': 'jmp', 'labels': [target_label]})
+        end_labels[_func['name']] = target_label
 
     # PCs of instructions that we have inserted in the middle of the function
     added_instr_pcs = {}
@@ -91,6 +100,7 @@ def recover_traces(source):
                 for i, _label in enumerate(_instr['labels']):
                     if _label in traced_labels[_func['name']]:
                         _instr['labels'][i] = traced_label_name(_label)
+        _func['instrs'].append({'label': end_labels[_func['name']]})
 
     print(json.dumps(prog))
 

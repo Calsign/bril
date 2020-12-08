@@ -318,6 +318,7 @@ type State = {
   specparent: State | null,
 
   // For tracing
+  enable_tracing: boolean,
   trace_header: TraceHeader | null,
   traced_labels_this_time: string[],
   traced_labels: string[],
@@ -365,6 +366,7 @@ function evalCall(instr: bril.Operation, state: State): Action {
     lastlabel: null,
     curlabel: null,
     specparent: null,  // Speculation not allowed.
+    enable_tracing: state.enable_tracing,
     trace_header: state.trace_header,
     traced_labels_this_time: state.traced_labels_this_time,
     traced_labels: state.traced_labels,
@@ -441,7 +443,6 @@ function traceInstr(instr: bril.Instruction, state: State, pc: number) {
             // nop
             break;
         case "br":
-            // TODO insert guard
             writeTracedInstr({ op: "guard", "args": instr.args, "labels": [ state.trace_header.label ] });
             break;
         case "ret":
@@ -470,7 +471,7 @@ function traceInstr(instr: bril.Instruction, state: State, pc: number) {
 function traceLabel(label: string, state: State, func: bril.Function, pc: number) {
     if (state.trace_header === null) {
         // only trace starting from each label once
-        if (!state.traced_labels.includes(label)) {
+        if (!state.traced_labels.includes(label) && state.enable_tracing) {
             // I know this isn't to spec, but it's a way of packing extra information for use by the transformation phase
             writeTracedInstr({ op: "speculate", labels: [ label ], args: [ func.name, pc.toString() ] });
             state.trace_header = { label: label, func: func.name, pc: pc };
@@ -963,6 +964,12 @@ function evalProg(prog: bril.Program) {
     profiling = true;
     args.splice(pidx, 1);
   }
+  let tracing = false;
+  let tidx = args.indexOf('-t');
+  if (tidx > -1) {
+    tracing = true;
+    args.splice(tidx, 1);
+  }
 
   // Remaining arguments are for the main function.k
   let expected = main.args || [];
@@ -976,6 +983,7 @@ function evalProg(prog: bril.Program) {
     lastlabel: null,
     curlabel: null,
     specparent: null,
+    enable_tracing: tracing,
     trace_header: null,
     traced_labels_this_time: [],
     traced_labels: [],
